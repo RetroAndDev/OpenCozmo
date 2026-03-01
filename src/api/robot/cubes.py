@@ -120,8 +120,8 @@ def stop() -> None:
         client.remove_handler(pycozmo.event.EvtObjectMovingChange,   _on_cube_moving)
         client.remove_handler(pycozmo.event.EvtObjectConnectChanged, _on_cube_connect)
         logger.info("Cube event handlers removed.")
-    except RuntimeError:
-        pass  # Already disconnected
+    except Exception:
+        pass  # Already disconnected or client unavailable
 
 
 # ---------------------------------------------------------------------------

@@ -33,6 +33,13 @@ logger = logging.getLogger(__name__)
 # Shared queue: sensors.py puts messages here, server.py fans them out.
 # Created once, imported by server.py.
 event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+_loop: asyncio.AbstractEventLoop | None = None
+_seen_first_state_event = False
+_state_event_log_interval_s: float = 1.0
+_state_log_last_ts: float | None = None
+_state_events_since_log: int = 0
+_state_changed_since_log: int = 0
+_auto_broadcast_state: bool = False  # If False, don't emit robotstate events automatically
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +52,10 @@ def _emit(event_dict: dict[str, Any]) -> None:
     Thread-safe: PyCozmo callbacks run in a separate thread.
     """
     try:
-        event_queue.put_nowait(event_dict)
+        if _loop is not None:
+            _loop.call_soon_threadsafe(event_queue.put_nowait, event_dict)
+        else:
+            event_queue.put_nowait(event_dict)
     except asyncio.QueueFull:
         logger.warning("Event queue full, dropping sensor event: %s", event_dict.get("type"))
 
@@ -60,83 +70,119 @@ def _ts() -> float:
 # (called by PyCozmo in its own thread — must be synchronous and fast)
 # ---------------------------------------------------------------------------
 
-def _on_state_updated(cli, evt: pycozmo.event.EvtRobotStateUpdated) -> None:
+def _on_state_updated(cli : pycozmo.client.Client, *_) -> None:
     """
     Fires frequently (several times per second) with the full robot state.
     We emit battery and pose updates from here.
     """
+    global _seen_first_state_event
+    global _state_log_last_ts, _state_events_since_log, _state_changed_since_log
+
+    if not _seen_first_state_event:
+        _seen_first_state_event = True
+        logger.info("EvtRobotStateUpdated reçu (premier paquet).")
+
+    # Snapshot before update to detect whether global state changed
+    before = robot_state.get_state().get_json()
+
     # Update internal robot state tracker
-    robot_state.update_battery(cli.battery_voltage)
-    robot_state.update_lift(cli.lift_height_mm)
-    robot_state.update_head(cli.head_angle_rad)
-    if hasattr(evt, "x") and hasattr(evt, "y") and hasattr(evt, "z"):
-        robot_state.update_pose(evt.x, evt.y, evt.z)
+    robot_state.update_state_from_cli(cli)
 
     # Emit to connected clients
     state = robot_state.get_state()
-    _emit({
-        "type":      "event.sensor.state",
-        "timestamp": _ts(),
-        "battery": {
-            "voltage":  state.battery.voltage,
-            "level":    state.battery.level,
-            "charging": state.battery.charging,
-        },
-        "pose": {
-            "x":   state.pose.x,
-            "y":   state.pose.y,
-            "z":   state.pose.z,
-        },
-        "lift_height_mm":  state.lift_height_mm,
-        "head_angle_deg":  state.head_angle_deg,
-    })
+    changed = before != state.get_json()
+
+    _state_events_since_log += 1
+    if changed:
+        _state_changed_since_log += 1
+
+    if _state_event_log_interval_s > 0:
+        now = time.monotonic()
+        if _state_log_last_ts is None:
+            _state_log_last_ts = now
+        elapsed = now - _state_log_last_ts
+        if elapsed >= _state_event_log_interval_s:
+            logger.info(
+                "EvtRobotStateUpdated: %d reçus, %d changements sur %.2fs (~%.1f evt/s)",
+                _state_events_since_log,
+                _state_changed_since_log,
+                elapsed,
+                (_state_events_since_log / elapsed) if elapsed > 0 else 0.0,
+            )
+            _state_events_since_log = 0
+            _state_changed_since_log = 0
+            _state_log_last_ts = now
+
+    if changed:
+        logger.debug(
+            "RobotState global changé: %s",
+            state.get_json()
+        )
+    logger.debug(
+        "EvtRobotStateUpdated reçu: changed=%s state: %s",
+        changed,
+        state.get_json()
+    )
+
+    # Only emit robotstate event if auto-broadcast is enabled
+    if _auto_broadcast_state:
+        payload = { "type":      "event.robotstate" }
+        for key, value in state.get_json().items():
+            payload[key] = value
+        _emit(payload)
 
 
-def _on_cliff_detected(cli, evt: pycozmo.event.EvtCliffDetectedChange) -> None:
+def _on_cliff_detected(cli, state) -> None:
     """
     Fires when a cliff sensor state changes (detected or cleared).
     PyCozmo exposes four cliff sensors: front-left, front-right, back-left, back-right.
     """
-    robot_state.update_cliff_detected(evt.detected)
+    del cli
+    detected = bool(state)
+    robot_state.update_cliff_state(detected)
 
     _emit({
         "type":      "event.sensor.cliff",
         "timestamp": _ts(),
         # evt.detected is True when at least one sensor sees a cliff
-        "detected":  evt.detected,
+        "detected":  detected,
         # Individual sensor states (bool) — attribute names from PyCozmo source
         "sensors": {
-            "front_left":  getattr(evt, "front_left",  None),
-            "front_right": getattr(evt, "front_right", None),
-            "back_left":   getattr(evt, "back_left",   None),
-            "back_right":  getattr(evt, "back_right",  None),
+            "front_left":  None,
+            "front_right": None,
+            "back_left":   None,
+            "back_right":  None,
         },
     })
 
 
-def _on_picked_up(cli, evt: pycozmo.event.EvtRobotPickedUpChange) -> None:
+def _on_picked_up(cli, state) -> None:
     """
     Fires when the robot is picked up or set back down.
     """
-    robot_state.update_picked_up(evt.picked_up)
+    del cli
+    picked_up = bool(state)
+    robot_state.update_picked_up_state(picked_up)
 
     _emit({
         "type":      "event.robot.picked_up",
         "timestamp": _ts(),
-        "picked_up": evt.picked_up,
+        "picked_up": picked_up,
     })
 
 
-def _on_falling(cli, evt: pycozmo.event.EvtRobotFallingChange) -> None:
+def _on_falling(cli, state) -> None:
     """
     Fires when the robot starts or stops falling.
     """
-    robot_state.update_falling(evt.falling)
+    del cli
+    falling = bool(state)
+    robot_state.update_falling_state(falling)
 
     _emit({
         "type":      "event.robot.falling",
         "timestamp": _ts(),
-        "falling":   evt.falling,
+        "falling":   falling,
     })
 
 
@@ -144,12 +190,29 @@ def _on_falling(cli, evt: pycozmo.event.EvtRobotFallingChange) -> None:
 # Startup / teardown
 # ---------------------------------------------------------------------------
 
-def start() -> None:
+def start(config: dict | None = None) -> None:
     """
     Register all PyCozmo event handlers.
     Must be called after controller.connect() succeeds.
     Safe to call from the async event loop — PyCozmo adds handlers synchronously.
+
+    Args:
+        config: Optional "sensors" section from global config.
+                Uses: state_event_log_hz (default: 1.0).
+                      auto_broadcast_state (default: False).
     """
+    global _loop, _state_event_log_interval_s, _state_log_last_ts
+    global _state_events_since_log, _state_changed_since_log, _auto_broadcast_state
+
+    _loop = asyncio.get_running_loop()
+    cfg = config or {}
+    hz = float(cfg.get("state_event_log_hz", 1.0))
+    _state_event_log_interval_s = (1.0 / hz) if hz > 0 else 0.0
+    _state_log_last_ts = None
+    _state_events_since_log = 0
+    _state_changed_since_log = 0
+    _auto_broadcast_state = bool(cfg.get("auto_broadcast_state", False))
+
     client = get_client()
 
     client.add_handler(pycozmo.event.EvtRobotStateUpdated,   _on_state_updated)
@@ -157,7 +220,10 @@ def start() -> None:
     client.add_handler(pycozmo.event.EvtRobotPickedUpChange, _on_picked_up)
     client.add_handler(pycozmo.event.EvtRobotFallingChange,  _on_falling)
 
-    logger.info("Sensor event handlers registered.")
+    if hz > 0:
+        logger.info("Sensor event handlers registered. State log périodique: %.2f Hz", hz)
+    else:
+        logger.info("Sensor event handlers registered. State log périodique désactivé (state_event_log_hz<=0).")
 
 
 def stop() -> None:
@@ -172,8 +238,8 @@ def stop() -> None:
         client.remove_handler(pycozmo.event.EvtRobotPickedUpChange, _on_picked_up)
         client.remove_handler(pycozmo.event.EvtRobotFallingChange,  _on_falling)
         logger.info("Sensor event handlers removed.")
-    except RuntimeError:
-        pass  # Already disconnected, nothing to unregister
+    except Exception:
+        pass  # Already disconnected or client unavailable, nothing to unregister
 
 
 # ---------------------------------------------------------------------------

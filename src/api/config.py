@@ -11,6 +11,7 @@ DEFAULTS: dict = {
     "robot": {
         "wifi_ssid": "",  # Auto-detected if empty
         "connect_timeout_s": 10,
+        "turn_calibration_factor": 2.11,  # Empirical correction for turn accuracy
     },
     "server": {
         "host": "0.0.0.0",
@@ -21,6 +22,10 @@ DEFAULTS: dict = {
         "enabled": True,
         "fps": 15,
         "quality": 70,
+    },
+    "sensors": {
+        "state_event_log_hz": 1.0,  # 1 log/s by default, <=0 disables periodic log
+        "auto_broadcast_state": False,  # Auto-broadcast robotstate via websocket (if False, only on system.status request)
     },
     "llm": {
         "url": "https://api.mistral.ai/v1",
@@ -53,6 +58,7 @@ def _apply_env_overrides(config: dict) -> dict:
         "OPENCOZMO_LLM_MODEL":    ("llm", "model"),
         "OPENCOZMO_SERVER_HOST":  ("server", "host"),
         "OPENCOZMO_SERVER_PORT":  ("server", "port"),
+        "OPENCOZMO_STATE_LOG_HZ": ("sensors", "state_event_log_hz"),
         "OPENCOZMO_LOG_LEVEL":    ("logging", "level"),
         "OPENCOZMO_LOG_DIR":      ("logging", "output_dir"),
     }

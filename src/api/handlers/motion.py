@@ -3,7 +3,7 @@ handlers/motion.py — Motion command handler
 
 Supported message types:
     motion.drive    Drive straight at a given speed for a duration.
-    motion.turn     Turn in place by a given angle.
+    motion.turn_to  Turn in place by a given angle (speed optional).
     motion.stop     Immediate full stop.
     motion.set_lift Set lift height (normalized 0.0–1.0).
     motion.set_head Set head angle in degrees.
@@ -11,7 +11,7 @@ Supported message types:
 
 import logging
 from typing import Any
-
+from pycozmo.robot import *
 import websockets
 
 from robot import controller
@@ -32,6 +32,8 @@ async def handle(data: dict[str, Any], ws: websockets.ServerConnection) -> None:
         match action:
             case "motion.drive":
                 await _drive(payload)
+            case "motion.turn_to":
+                await _turn_to(payload)
             case "motion.turn":
                 await _turn(payload)
             case "motion.stop":
@@ -63,8 +65,8 @@ async def _drive(data: dict[str, Any]) -> None:
     speed: int = int(data["speed"])
     duration_ms: int = int(data["duration_ms"])
 
-    if not -500 <= speed <= 500:
-        raise ValueError(f"speed must be in [-500, 500], got {speed}")
+    if not -MAX_WHEEL_SPEED.mmps <= speed <= MAX_WHEEL_SPEED.mmps:
+        raise ValueError(f"speed must be in [-{MAX_WHEEL_SPEED.mmps}, {MAX_WHEEL_SPEED.mmps}], got {speed}")
     if duration_ms < 0:
         raise ValueError(f"duration_ms must be positive, got {duration_ms}")
 
@@ -72,12 +74,25 @@ async def _drive(data: dict[str, Any]) -> None:
     await controller.drive(speed, duration_ms)
 
 
-async def _turn(data: dict[str, Any]) -> None:
+async def _turn_to(data: dict[str, Any]) -> None:
     angle_deg: float = float(data["angle_deg"])
-    speed: int = int(data.get("speed", 100))
+    speed: int = int(data.get("speed", 100))  # Default 100 deg/s
 
-    logger.debug("turn: angle=%.1f°, speed=%d", angle_deg, speed)
-    await controller.turn(angle_deg, speed)
+    if not -MAX_WHEEL_SPEED.mmps <= speed <= MAX_WHEEL_SPEED.mmps:
+        raise ValueError(f"speed must be in [-{MAX_WHEEL_SPEED.mmps}, {MAX_WHEEL_SPEED.mmps}], got {speed}")
+
+    logger.debug("turn_to: angle=%.1f°, speed=%d", angle_deg, speed)
+    await controller.turn_to(angle_deg, speed)
+
+async def _turn(data: dict[str, Any]) -> None:
+    direction: int = int(data["direction"])
+    speed: int = int(data.get("speed", 100))  # Default 100 deg/s
+
+    if speed <= 0:
+        raise ValueError(f"speed must be positive, got {speed}")
+
+    logger.debug("turn: direction=%d, speed=%d", direction, speed)
+    await controller.turn(direction, speed)
 
 
 async def _stop() -> None:
@@ -88,8 +103,8 @@ async def _stop() -> None:
 async def _set_lift(data: dict[str, Any]) -> None:
     height: float = float(data["height"])
 
-    if not 0.0 <= height <= 1.0:
-        raise ValueError(f"height must be in [0.0, 1.0], got {height}")
+    if not MIN_LIFT_HEIGHT.mm <= height <= MAX_LIFT_HEIGHT.mm:
+        raise ValueError(f"height must be in [{MIN_LIFT_HEIGHT.mm}, {MAX_LIFT_HEIGHT.mm}], got {height}")
 
     logger.debug("set_lift: height=%.2f", height)
     await controller.set_lift(height)
@@ -98,8 +113,8 @@ async def _set_lift(data: dict[str, Any]) -> None:
 async def _set_head(data: dict[str, Any]) -> None:
     angle_deg: float = float(data["angle_deg"])
 
-    if not -25.0 <= angle_deg <= 44.5:
-        raise ValueError(f"angle_deg must be in [-25, 44.5], got {angle_deg}")
+    if not MIN_HEAD_ANGLE.mm <= angle_deg <= MAX_HEAD_ANGLE.mm:
+        raise ValueError(f"angle_deg must be in [{MIN_HEAD_ANGLE.mm}, {MAX_HEAD_ANGLE.mm}], got {angle_deg}")
 
     logger.debug("set_head: angle=%.1f°", angle_deg)
     await controller.set_head(angle_deg)

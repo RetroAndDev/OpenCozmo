@@ -5,18 +5,22 @@
 robot:
   wifi_ssid: ''
   connect_timeout_s: 10
+  turn_calibration_factor: 2.14  # Calibration factor for turn accuracy (adjust if robot doesn't turn the right angle)
 server:
   host: 0.0.0.0
   port: 8765
   mdns_name: opencozmo
 camera:
-  enabled: true
+  enabled: false
   fps: 15
   quality: 70
+sensors:
+  state_event_log_hz: 1.0
+  auto_broadcast_state: false
 llm:
   url: https://api.mistral.ai/v1
   model: mistral-small
   api_key: ''
 logging:
-  level: INFO
+  level: DEBUG
   output_dir: logs

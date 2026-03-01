@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 # Latest encoded frame — shared between the PyCozmo callback and the async layer
 _latest_frame: dict[str, Any] | None = None
 _frame_event = asyncio.Event()   # set each time a new frame is available
+_loop: asyncio.AbstractEventLoop | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -48,29 +49,39 @@ def _on_camera_image(cli, evt: pycozmo.event.EvtNewRawCameraImage) -> None:
     global _latest_frame
 
     try:
+        # Extract the image from the event
+        # PyCozmo API can vary - try different attribute names
+        if hasattr(evt, 'image'):
+            img = evt.image
+        elif hasattr(evt, 'image_data'):
+            img = evt.image_data
+        else:
+            # If evt is itself an image-like object
+            img = evt
+            
         buf = io.BytesIO()
         # Save as JPEG — quality is set at stream start from config
-        evt.image.save(buf, format="JPEG", quality=_jpeg_quality)
+        img.save(buf, format="JPEG", quality=_jpeg_quality)
         frame_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
         _latest_frame = {
             "type":      "event.camera.frame",
             "timestamp": time.time(),
-            "width":     evt.image.width,
-            "height":    evt.image.height,
+            "width":     img.width,
+            "height":    img.height,
             "data":      frame_b64,   # JPEG bytes, base64-encoded
         }
 
         # Signal the async streamer that a new frame is ready.
         # call_soon_threadsafe is required because this runs in a non-async thread.
         try:
-            loop = asyncio.get_event_loop()
-            loop.call_soon_threadsafe(_frame_event.set)
-        except RuntimeError:
+            if _loop is not None:
+                _loop.call_soon_threadsafe(_frame_event.set)
+        except Exception:
             pass  # Event loop not running — server is shutting down
 
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to encode camera frame: %s", exc)
+        logger.exception("Failed to encode camera frame")
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +105,7 @@ def start(config: dict) -> None:
         config : The "camera" section of the global config dict.
                  Uses: enabled, fps, quality.
     """
-    global _jpeg_quality, _target_fps
+    global _jpeg_quality, _target_fps, _loop
 
     if not config.get("enabled", True):
         logger.info("Camera disabled in config, skipping.")
@@ -102,6 +113,7 @@ def start(config: dict) -> None:
 
     _jpeg_quality = int(config.get("quality", 70))
     _target_fps   = int(config.get("fps", 15))
+    _loop = asyncio.get_running_loop()
 
     client = get_client()
 
@@ -124,8 +136,8 @@ def stop() -> None:
         client.enable_camera(enable=False)
         client.remove_handler(pycozmo.event.EvtNewRawCameraImage, _on_camera_image)
         logger.info("Camera disabled.")
-    except RuntimeError:
-        pass  # Already disconnected
+    except Exception:
+        pass  # Already disconnected or client unavailable
 
 
 # ---------------------------------------------------------------------------

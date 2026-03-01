@@ -332,7 +332,7 @@ All messages are JSON objects. Every message **must** have a `type` field (strin
 | Type | Fields | Description |
 |---|---|---|
 | `motion.drive` | `speed` (int, -500–500), `duration_ms` (int) | Drive straight |
-| `motion.turn` | `angle_deg` (float), `speed` (int) | Turn in place |
+| `motion.turn_to` | `angle_deg` (float), `speed` (int, optional, default 100) | Turn in place to an angle at specified speed |
 | `motion.stop` | — | Immediate stop |
 | `motion.set_lift` | `height` (float, 0.0–1.0) | Set lift position |
 | `motion.set_head` | `angle_deg` (float, -25–44.5) | Set head angle |

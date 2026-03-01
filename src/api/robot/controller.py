@@ -24,6 +24,8 @@ from typing import Optional
 
 import pycozmo
 import pycozmo.lights
+import pycozmo.robot
+import pycozmo.util
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _client: Optional[pycozmo.Client] = None
+_turn_calibration_factor: float = 2.11  # Set during connect()
 
 
 # ---------------------------------------------------------------------------
@@ -48,13 +51,15 @@ async def connect(config: dict) -> None:
     Args:
         config: The robot section of the global config dict.
                 Uses: config["connect_timeout_s"]
+                      config["turn_calibration_factor"]
 
     Raises:
         RuntimeError: If the robot can not be reached within the timeout.
     """
-    global _client
+    global _client, _turn_calibration_factor
 
     timeout = int(config.get("connect_timeout_s", 10))
+    _turn_calibration_factor = float(config.get("turn_calibration_factor", 2.11))
 
     logger.info("Connecting to Cozmo (timeout=%ds)…", timeout)
 
@@ -177,8 +182,25 @@ async def drive(speed: int, duration_ms: int) -> None:
         duration=duration_s,
     )
 
+async def turn(direction: int, speed: int = 100) -> None:
+    """
+    Turn the robot in place.
 
-async def turn(angle_deg: float, speed: int = 100) -> None:
+    Args:
+        direction : Positive = turn left, negative = turn right.
+                    The actual angle turned depends on the duration and speed.
+        speed     : Turning speed in deg/s (we convert to rad/s).
+                    Default: 100 deg/s.
+    """
+    client = _require_client()
+    speed_rad = _deg_to_rad(speed)
+
+    logger.debug("turn(direction=%d, speed=%d°/s)", direction, speed)
+
+    # PyCozmo: drive_wheels with opposite speeds turns in place
+    await _run_sync(client.turn_in_place_at_speed, direction, speed_rad)
+
+async def turn_to(angle_deg: float, speed: int = 100) -> None:
     """
     Turn the robot in place.
 
@@ -193,11 +215,10 @@ async def turn(angle_deg: float, speed: int = 100) -> None:
     angle_rad = _deg_to_rad(angle_deg)
     speed_rad = _deg_to_rad(speed)
 
-    logger.debug("turn(angle=%.1f°, speed=%d°/s)", angle_deg, speed)
+    logger.debug("turn_to(angle=%.1f°, speed=%d°/s)", angle_deg, speed)
 
     # PyCozmo: turn_in_place(angle_rad, speed_rad)
-    await _run_sync(client.turn_in_place, angle_rad, speed_rad)
-
+    await _run_sync(client.turn_in_place, angle_rad, speed_rad, is_absolute=True)
 
 async def stop() -> None:
     """
@@ -223,6 +244,7 @@ async def set_lift(height: float) -> None:
     logger.debug("set_lift(height=%.2f)", height)
 
     # PyCozmo: set_lift_height(height, accel=None, max_speed=None, duration=None)
+    # height is a normalized float [0.0 .. 1.0]
     await _run_sync(client.set_lift_height, height)
 
 

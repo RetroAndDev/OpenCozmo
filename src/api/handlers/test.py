@@ -1,14 +1,14 @@
 """
-handlers/system.py — System command handler
+handlers/test.py — Tests command handler
 
 Supported message types:
-    system.ping       Connectivity check.
-    system.status     Return current API/robot status snapshot.
-    system.disconnect Disconnect robot session gracefully.
+    test.test_lift_cube_muscu   Test lift by lifting a cube repeatedly like a bicep curl.
 """
 
+import asyncio
 import json
 import logging
+import random
 from typing import Any
 
 import websockets
@@ -24,15 +24,13 @@ async def handle(data: dict[str, Any], ws: websockets.ServerConnection) -> None:
 
     try:
         match action:
-            case "system.ping":
-                await _pong(ws, request_id)
-            case "system.status":
-                await _status(ws, request_id)
-            case "system.disconnect":
-                await controller.disconnect()
-                await _send_ack(ws, action, request_id)
+            case "test.test_lift_cube_muscu":
+                await _test_muscu(ws, request_id)
             case _:
-                await _send_error(ws, request_id, "UNKNOWN_ACTION", f"Unknown system action: {action}")
+                await _send_error(ws, request_id, "UNKNOWN_ACTION", f"Unknown test action: {action}")
+                return
+
+        await _send_ack(ws, action, request_id)
 
     except RuntimeError as exc:
         logger.warning("Robot unavailable for '%s': %s", action, exc)
@@ -42,31 +40,20 @@ async def handle(data: dict[str, Any], ws: websockets.ServerConnection) -> None:
         await _send_error(ws, request_id, "INTERNAL_ERROR", str(exc))
 
 
-async def _pong(ws: websockets.ServerConnection, request_id: str | None) -> None:
-    response: dict[str, Any] = {"type": "system.pong"}
+async def _test_muscu(ws: websockets.ServerConnection, request_id: str | None) -> None:
+    response: dict[str, Any] = {"type": "test.test_lift_cube_muscu.response", "success": True}
     if request_id:
         response["request_id"] = request_id
     await ws.send(json.dumps(response))
 
-
-async def _status(ws: websockets.ServerConnection, request_id: str | None) -> None:
-    connected = controller.is_connected()
-    if not connected:
-        await _send_error(ws, request_id, "ROBOT_DISCONNECTED", "Robot is not connected.")
-        return
-
-    status_payload: dict[str, Any] = {
-        "type": "system.status",
-        "success": True,
-    }
-    for key, value in robot_state.get_state().get_json().items():
-        status_payload[key] = value
-
-    if request_id:
-        status_payload["request_id"] = request_id
-
-    await ws.send(json.dumps(status_payload))
-
+    # Test lift by lifting a cube repeatedly like a bicep curl.
+    lift_max = 90
+    for _ in range(5):
+        random_factor = random.uniform(0.8, 1.0)  # Add some variability to the lift height
+        await controller.set_lift(lift_max * random_factor)  # up
+        await asyncio.sleep(1.0)
+        await controller.set_lift(44 * random_factor)  # down
+        await asyncio.sleep(1.0)
 
 async def _send_ack(
     ws: websockets.ServerConnection,
@@ -86,7 +73,7 @@ async def _send_error(
     message: str,
 ) -> None:
     response: dict[str, Any] = {
-        "type": "system.error",
+        "type": "test.error",
         "code": code,
         "message": message,
     }

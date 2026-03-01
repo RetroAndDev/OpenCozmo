@@ -14,13 +14,14 @@ Startup sequence:
 import asyncio
 import json
 import logging
+import signal
 
 import websockets
 import websockets.exceptions
 
 import logger as log_setup
 import config as cfg
-from handlers import motion, animation, audio, camera as camera_handler, system
+from handlers import motion, animation, audio, camera as camera_handler, system, test
 from robot import controller, sensors, camera as robot_camera
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
@@ -53,6 +54,7 @@ _HANDLERS = {
     "audio":     audio,
     "camera":    camera_handler,
     "system":    system,
+    "test":      test,
 }
 
 _connected_clients: set[websockets.ServerConnection] = set()
@@ -154,11 +156,21 @@ async def main() -> None:
     port: int = int(config["server"]["port"])
 
     background_tasks: list[asyncio.Task] = []
+    shutdown_event = asyncio.Event()
+
+    # Setup signal handlers for graceful shutdown
+    def signal_handler():
+        _log.info("Shutdown signal received (CTRL+C)")
+        shutdown_event.set()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, signal_handler)
 
     await controller.connect(config.get("robot", {}))
 
     try:
-        sensors.start()
+        sensors.start(config.get("sensors", {}))
         #cubes.start()
 
         background_tasks.append(asyncio.create_task(sensors.broadcast_loop(_connected_clients)))
@@ -170,8 +182,9 @@ async def main() -> None:
         _log.info("WebSocket server listening on ws://%s:%d", host, port)
 
         async with websockets.serve(_on_connect, host, port):
-            await asyncio.Future()  # Run forever
+            await shutdown_event.wait()  # Wait for CTRL+C
     finally:
+        _log.info("Shutting down gracefully...")
         for task in background_tasks:
             task.cancel()
         if background_tasks:
@@ -187,4 +200,5 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        _log.info("Shutdown requested — bye.")
+        pass  # Already handled by signal handler
+    _log.info("Shutdown complete — bye.")
