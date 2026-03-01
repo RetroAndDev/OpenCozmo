@@ -1,0 +1,5 @@
+websockets>=12.0
+#pycozmo>=0.9.0 # Should be installed from GitHub to get the latest fixes for Cozmo's new firmware
+PyYAML>=6.0
+Pillow>=10.0        # Camera frame encoding
+zeroconf>=0.131.0   # mDNS service advertisement
