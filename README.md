@@ -10,7 +10,7 @@ The project does **not** modify the robot itself (*but the charging station will
 
 ## 📋 Status
 
-> **Last updated**: _1 March 2026_
+> **Last updated**: _2 March 2026_
 
 | Component | Status | Notes |
 |---|---|---|
@@ -23,6 +23,8 @@ The project does **not** modify the robot itself (*but the charging station will
 **Legend:** 💡 Concept · 🔬 Research/WIP · 🚧 In Development · ✅ Stable · ⚠️ Broken
 
 > I am currently in the early research and architecture design phase. The WebSocket API is the first piece to be built, as it is the foundation for everything else. I'm testing the PyCozmo library, mapping out the API endpoints, and building a simple proof-of-concept server that can control the robot and stream sensor data.
+
+> Made a simple WebSocket server that can control Cozmo's movement and robot data. It's very basic but it's a start! Next steps: expand the API to cover more features, like animations (but some seems to crash the robot when triggered from PyCozmo, need to investigate), camera feed, and cube interactions. Then I can start building the Flutter app on top of it.
 
 ---
 

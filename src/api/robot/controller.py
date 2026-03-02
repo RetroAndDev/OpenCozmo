@@ -72,12 +72,13 @@ async def connect(config: dict) -> None:
 
     def _do_connect() -> pycozmo.Client:
         client = pycozmo.Client(
-            enable_animations=False,
+            enable_animations=True,
             enable_procedural_face=False
         )
         client.start()
         client.connect()
         client.wait_for_robot()  # blocks until the robot handshake is complete
+        client.load_anims() # Preload animations to avoid delays on first play
         return client
 
     try:
@@ -313,6 +314,13 @@ async def stop_animation() -> None:
 
     raise NotImplementedError("Stopping animations is not supported by this PyCozmo version")
 
+def get_animation_names() -> list[str]:
+    """
+    Return a list of available animation names.
+
+    This can be used to validate animation names before trying to play them.
+    """
+    return _require_client().get_anim_names()
 
 async def set_face_image(png_bytes: bytes) -> None:
     """

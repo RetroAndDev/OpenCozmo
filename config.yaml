@@ -22,5 +22,5 @@ llm:
   model: mistral-small
   api_key: ''
 logging:
-  level: DEBUG
+  level: INFO
   output_dir: logs

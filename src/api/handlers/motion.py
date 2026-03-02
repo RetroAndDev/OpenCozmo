@@ -42,6 +42,8 @@ async def handle(data: dict[str, Any], ws: websockets.ServerConnection) -> None:
                 await _set_lift(payload)
             case "motion.set_head":
                 await _set_head(payload)
+            case "motion.animate":
+                await _animate(payload)
             case _:
                 await _send_error(ws, request_id, "UNKNOWN_ACTION", f"Unknown motion action: {action}")
                 return
@@ -113,11 +115,17 @@ async def _set_lift(data: dict[str, Any]) -> None:
 async def _set_head(data: dict[str, Any]) -> None:
     angle_deg: float = float(data["angle_deg"])
 
-    if not MIN_HEAD_ANGLE.mm <= angle_deg <= MAX_HEAD_ANGLE.mm:
-        raise ValueError(f"angle_deg must be in [{MIN_HEAD_ANGLE.mm}, {MAX_HEAD_ANGLE.mm}], got {angle_deg}")
+    if not MIN_HEAD_ANGLE.degrees <= angle_deg <= MAX_HEAD_ANGLE.degrees:
+        raise ValueError(f"angle_deg must be in [{MIN_HEAD_ANGLE.degrees}, {MAX_HEAD_ANGLE.degrees}], got {angle_deg}")
 
     logger.debug("set_head: angle=%.1f°", angle_deg)
     await controller.set_head(angle_deg)
+
+async def _animate(data: dict[str, Any]) -> None:
+    animation_name: str = data["animation_name"]
+
+    logger.debug("animate: name=%s", animation_name)
+    await controller.play_animation(animation_name)
 
 
 # ── Response helpers ───────────────────────────────────────────────────────────
